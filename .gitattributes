@@ -1,0 +1,10 @@
+# Normalise line endings in the repository regardless of the platform used to
+# commit; check out native.
+* text=auto eol=lf
+
+# Binary assets must never be touched by line-ending conversion.
+*.webp binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.woff2 binary

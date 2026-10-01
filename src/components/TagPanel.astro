@@ -1,0 +1,109 @@
+---
+import type { TagCount } from '@/data/photos'
+
+interface Props {
+  tags: TagCount[]
+}
+
+const { tags } = Astro.props
+---
+
+<nav class="tag-panel" aria-label="Filter by series">
+  <ul>
+    {
+      tags.map(tag => (
+        <li>
+          <button
+            type="button"
+            class="tag"
+            data-tag={tag.name}
+            aria-pressed={tag.name === 'all' ? 'true' : 'false'}
+          >
+            {tag.name}
+            <sup>{tag.count}</sup>
+          </button>
+        </li>
+      ))
+    }
+  </ul>
+</nav>
+
+<style>
+  /* Anchored to its own bottom, just clear of the toolbar, so the list grows
+     upward as series are added instead of drifting off-centre. */
+  .tag-panel {
+    position: fixed;
+    right: var(--pad-edge);
+    bottom: calc(var(--pad-edge) + 2.25rem);
+    z-index: var(--z-chrome);
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+
+  ul {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.35rem;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 0.15em;
+    padding: 0;
+    color: var(--c-ink-faint);
+    font-size: var(--fs-small);
+    line-height: 1.2;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+
+  .tag sup {
+    font-size: var(--fs-nano);
+    line-height: 1;
+  }
+
+  .tag:hover {
+    color: var(--c-ink-mute);
+  }
+
+  /* Selected series reads as the only committed item in the list. */
+  .tag[aria-pressed='true'] {
+    color: var(--c-ink);
+    font-weight: 500;
+  }
+
+  /* The panel steps aside while a single photograph holds the frame. */
+  :global([data-mode='detail']) .tag-panel {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /*
+   * A column of nine series eats a third of a phone screen, and the band is
+   * behind it. Laid along the bottom instead, above the toolbar, and scrolled
+   * sideways when the series outrun the width.
+   */
+  @media (width < 720px) {
+    .tag-panel {
+      right: 0;
+      left: 0;
+      bottom: calc(var(--pad-edge) + 2.4rem);
+      padding: 0 var(--pad-edge);
+      overflow-x: auto;
+
+      /* A scrollbar under a row of nine words is louder than the row. */
+      scrollbar-width: none;
+    }
+
+    .tag-panel::-webkit-scrollbar {
+      display: none;
+    }
+
+    ul {
+      flex-direction: row;
+      align-items: center;
+      gap: 1.1rem;
+      width: max-content;
+    }
+  }
+</style>

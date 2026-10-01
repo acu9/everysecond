@@ -1,0 +1,413 @@
+---
+import type { ImageMetadata } from 'astro'
+import { getImage } from 'astro:assets'
+import { getTagCounts, photos } from '@/data/photos'
+import Layout from '@/layouts/Layout.astro'
+
+// The archive as a contact sheet.
+//
+// The ribbon is the way to *travel* the collection; this is the way to look it
+// up — every frame at once, in a grid, filterable by series and by what the
+// viewer has saved. Each picture links back into the gallery on itself, so the
+// two pages are two readings of one archive rather than two galleries.
+//
+// The same 240w variant the band uses, deliberately: asking for another width
+// would emit two hundred more files for cells this size to draw at.
+const sources = import.meta.glob<{ default: ImageMetadata }>(
+  '/src/assets/photos/*.webp',
+  { eager: true },
+)
+
+const sheet = await Promise.all(
+  photos.map(async (photo) => {
+    const asset = sources[`/src/assets/photos/${photo.file}`]
+    if (!asset) {
+      throw new Error(`No image asset found for ${photo.file}`)
+    }
+
+    const thumb = await getImage({
+      src: asset.default,
+      width: 240,
+      format: 'webp',
+      quality: 74,
+    })
+
+    return { photo, thumb }
+  }),
+)
+
+const tags = getTagCounts()
+
+// Formatted here rather than in the browser: every one of these is known at
+// build time, and there are two hundred of them.
+const dateLabel = new Intl.DateTimeFormat('en-GB', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+})
+---
+
+<Layout title="collection : every : second" scrollable>
+  <div class="page">
+    <header class="head">
+      <a class="home" href="/">every : second</a>
+      <h1>collection</h1>
+      <p class="count">
+        <span data-field="shown">{photos.length}</span> of {photos.length} frames
+      </p>
+    </header>
+
+    <nav class="filters" aria-label="Filter the collection">
+      <button type="button" class="filter" data-filter="saved" aria-pressed="false">
+        saved<sup data-field="saved-count">0</sup>
+      </button>
+      {
+        tags.map(tag => (
+          <button
+            type="button"
+            class="filter"
+            data-filter="tag"
+            data-tag={tag.name}
+            aria-pressed={tag.name === 'all' ? 'true' : 'false'}
+          >
+            {tag.name}<sup>{tag.count}</sup>
+          </button>
+        ))
+      }
+    </nav>
+
+    <ul class="sheet" id="sheet">
+      {
+        sheet.map(({ photo, thumb }) => (
+          <li class="cell" data-id={photo.id} data-tags={photo.tags.join(' ')}>
+            <a href={`/?photo=${photo.id}`}>
+              <img
+                src={thumb.src}
+                width={thumb.attributes.width}
+                height={thumb.attributes.height}
+                alt={`${photo.location.city}, ${photo.location.country}`}
+                loading="lazy"
+                decoding="async"
+              />
+              <span class="meta">
+                <span class="place">{photo.location.city}</span>
+                <span class="date">{dateLabel.format(new Date(photo.capturedAt))}</span>
+              </span>
+            </a>
+            <button
+              type="button"
+              class="save"
+              data-save={photo.id}
+              aria-pressed="false"
+              aria-label={`Save ${photo.location.city} to your collection`}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M5 3h10v14l-5-4-5 4V3Z" />
+              </svg>
+            </button>
+          </li>
+        ))
+      }
+    </ul>
+
+    <p class="empty" id="empty" hidden>
+      Nothing saved yet. Open a photograph and keep it — saved frames gather here.
+    </p>
+  </div>
+</Layout>
+
+<style>
+  .page {
+    max-width: 96rem;
+    margin: 0 auto;
+    padding: var(--pad-edge) var(--pad-edge) 6rem;
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--c-line);
+  }
+
+  .home {
+    color: var(--c-ink);
+    font-size: var(--fs-small);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+    text-decoration: none;
+  }
+
+  .home::before {
+    content: '\2190';
+    margin-right: 0.5em;
+    color: var(--c-ink-mute);
+  }
+
+  .home:hover {
+    color: var(--c-accent);
+  }
+
+  h1 {
+    margin-right: auto;
+    color: var(--c-ink-mute);
+    font-size: var(--fs-small);
+    font-weight: 400;
+    letter-spacing: var(--tracking-wider);
+    text-transform: uppercase;
+  }
+
+  .count {
+    color: var(--c-ink-mute);
+    font-size: var(--fs-micro);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+  }
+
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.1rem;
+    margin: 1.25rem 0 2rem;
+  }
+
+  .filter {
+    color: var(--c-ink-faint);
+    font-size: var(--fs-small);
+    letter-spacing: var(--tracking-wide);
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+
+  .filter sup {
+    margin-left: 0.15em;
+    font-size: var(--fs-nano);
+  }
+
+  .filter:hover {
+    color: var(--c-ink-mute);
+  }
+
+  .filter[aria-pressed='true'] {
+    color: var(--c-ink);
+    font-weight: 500;
+  }
+
+  /* Saved is a different kind of filter from a series — it is the viewer's own
+     mark on the archive, so it takes the accent when it is on. */
+  .filter[data-filter='saved'][aria-pressed='true'] {
+    color: var(--c-accent);
+  }
+
+  .sheet {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: 1.5rem 1rem;
+  }
+
+  .cell {
+    position: relative;
+  }
+
+  .cell[hidden] {
+    display: none;
+  }
+
+  .cell a {
+    display: block;
+    text-decoration: none;
+  }
+
+  .cell img {
+    width: 100%;
+    aspect-ratio: 3 / 2;
+    object-fit: cover;
+    background: var(--c-bg-deep);
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+
+  .cell a:hover img {
+    opacity: 0.72;
+  }
+
+  .meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    font-size: var(--fs-micro);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+  }
+
+  .place {
+    color: var(--c-ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .date {
+    color: var(--c-ink-mute);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* Sits over the picture's own corner: at this size a row of its own would
+     cost as much height as the caption. */
+  .save {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    display: grid;
+    place-items: center;
+    width: 1.1rem;
+    height: 1.1rem;
+    color: var(--c-bg);
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+
+  .save svg {
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: currentcolor;
+    stroke-width: 1.4;
+    stroke-linejoin: round;
+
+    /* The picture underneath is any colour at all, so the outline needs its own
+       separation from it. */
+    filter: drop-shadow(0 0 2px rgb(30 30 30 / 55%));
+  }
+
+  .cell:hover .save,
+  .save:focus-visible {
+    opacity: 1;
+  }
+
+  /* A saved frame says so without being hovered — that is the whole point of
+     the mark. */
+  .save[aria-pressed='true'] {
+    color: var(--c-accent);
+    opacity: 1;
+  }
+
+  .save[aria-pressed='true'] svg {
+    fill: currentcolor;
+  }
+
+  .empty {
+    padding: 4rem 0;
+    color: var(--c-ink-mute);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--tracking-wide);
+    text-align: center;
+    text-transform: uppercase;
+  }
+
+  .empty[hidden] {
+    display: none;
+  }
+
+  @media (width < 720px) {
+    .sheet {
+      grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+    }
+
+    .head {
+      flex-wrap: wrap;
+      gap: 0.35rem 1rem;
+    }
+
+    h1 {
+      margin-right: 0;
+    }
+
+    .count {
+      width: 100%;
+    }
+  }
+</style>
+
+<script>
+import { isSaved, onCollectionChange, savedCount, toggleSaved } from '@/lib/collection'
+
+const cells = Array.from(document.querySelectorAll<HTMLElement>('.cell'))
+const filters = Array.from(document.querySelectorAll<HTMLElement>('.filter'))
+const shownField = document.querySelector<HTMLElement>('[data-field="shown"]')
+const savedField = document.querySelector<HTMLElement>('[data-field="saved-count"]')
+const empty = document.getElementById('empty')
+
+/** The two filters are independent: a series *and* whether it was kept. */
+let activeTag = 'all'
+let savedOnly = false
+
+function apply(): void {
+  let shown = 0
+
+  for (const cell of cells) {
+    const id = cell.dataset.id ?? ''
+    const tags = (cell.dataset.tags ?? '').split(' ')
+    const visible
+      = (activeTag === 'all' || tags.includes(activeTag))
+        && (!savedOnly || isSaved(id))
+
+    cell.hidden = !visible
+    if (visible) {
+      shown++
+    }
+
+    const button = cell.querySelector<HTMLElement>('[data-save]')
+    button?.setAttribute('aria-pressed', isSaved(id) ? 'true' : 'false')
+  }
+
+  if (shownField) {
+    shownField.textContent = String(shown)
+  }
+  if (savedField) {
+    savedField.textContent = String(savedCount())
+  }
+
+  // Only the saved filter can empty the sheet of its own accord, and only that
+  // case needs explaining — a series always has frames in it.
+  if (empty) {
+    empty.hidden = !(savedOnly && shown === 0)
+  }
+
+  for (const filter of filters) {
+    const pressed = filter.dataset.filter === 'saved'
+      ? savedOnly
+      : filter.dataset.tag === activeTag
+    filter.setAttribute('aria-pressed', pressed ? 'true' : 'false')
+  }
+}
+
+for (const filter of filters) {
+  filter.addEventListener('click', () => {
+    if (filter.dataset.filter === 'saved') {
+      savedOnly = !savedOnly
+    }
+    else {
+      activeTag = filter.dataset.tag ?? 'all'
+    }
+    apply()
+  })
+}
+
+for (const cell of cells) {
+  const button = cell.querySelector<HTMLElement>('[data-save]')
+  button?.addEventListener('click', () => {
+    // No redraw here: the store announces the change and `apply` is subscribed
+    // to it, so a save made on this page and one made in another tab take the
+    // same path through.
+    toggleSaved(button.dataset.save ?? '')
+  })
+}
+
+// The gallery in another tab edits the same collection.
+onCollectionChange(apply)
+
+apply()
+</script>

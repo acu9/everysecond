@@ -1,0 +1,29 @@
+---
+import Brandmark from '@/components/Brandmark.astro'
+import Caption from '@/components/Caption.astro'
+import Ribbon from '@/components/Ribbon.astro'
+import Shortcuts from '@/components/Shortcuts.astro'
+import Stamp from '@/components/Stamp.astro'
+import SwipeHint from '@/components/SwipeHint.astro'
+import TagPanel from '@/components/TagPanel.astro'
+import TimeAxis from '@/components/TimeAxis.astro'
+import Toolbar from '@/components/Toolbar.astro'
+import { getTagCounts } from '@/data/photos'
+import Layout from '@/layouts/Layout.astro'
+
+const tags = getTagCounts()
+---
+
+<Layout>
+  <main id="app" data-mode="ribbon">
+    <Stamp />
+    <Brandmark />
+    <Ribbon />
+    <TimeAxis />
+    <TagPanel tags={tags} />
+    <Caption />
+    <SwipeHint />
+    <Toolbar />
+    <Shortcuts />
+  </main>
+</Layout>

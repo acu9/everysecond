@@ -1,0 +1,213 @@
+---
+// The `?` panel: every way through the archive, named in one place.
+//
+// The gallery has no visible controls beyond the series list, which is the
+// point of it — so this is where the vocabulary is written down. Grouped by
+// mode rather than by input, because what a wheel notch or a click does is a
+// different thing in each of the three, and the mode is what the viewer can
+// see. Opened and closed by the ribbon controller, which owns the keyboard.
+---
+
+<div class="shortcuts" id="shortcuts" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" hidden>
+  <div class="sheet">
+    <header>
+      <h2>ways through</h2>
+      <button type="button" class="close" data-action="close-shortcuts" aria-label="Close">
+        <span aria-hidden="true">&#215;</span>
+      </button>
+    </header>
+
+    <div class="groups">
+      <section>
+        <h3>overview</h3>
+        <dl>
+          <dt>move the pointer <span class="or">/</span> drag</dt>
+          <dd>fan the band open</dd>
+          <dt>wheel</dt>
+          <dd>walk the focus along the band</dd>
+          <dt>click or tap <span class="or">/</span> <kbd>space</kbd></dt>
+          <dd>browse from the photograph in front</dd>
+        </dl>
+      </section>
+
+      <section>
+        <h3>browse</h3>
+        <dl>
+          <dt>wheel <span class="or">/</span> drag</dt>
+          <dd>travel the band, flick to glide</dd>
+          <dt>click or tap a photograph</dt>
+          <dd>select it; click again to open</dd>
+          <dt>click or tap empty space <span class="or">/</span> <kbd>esc</kbd></dt>
+          <dd>back to the overview</dd>
+        </dl>
+      </section>
+
+      <section>
+        <h3>detail</h3>
+        <dl>
+          <dt>wheel <span class="or">/</span> swipe</dt>
+          <dd>previous <span class="or">/</span> next photograph</dd>
+          <dt>click or tap the photograph</dt>
+          <dd>close it</dd>
+          <dt><kbd>esc</kbd></dt>
+          <dd>back to browse</dd>
+        </dl>
+      </section>
+
+      <section>
+        <h3>anywhere</h3>
+        <dl>
+          <dt><kbd>&#8592;</kbd> <kbd>&#8595;</kbd> <span class="or">/</span> <kbd>&#8594;</kbd> <kbd>&#8593;</kbd></dt>
+          <dd>previous <span class="or">/</span> next</dd>
+          <dt><kbd>s</kbd></dt>
+          <dd>save the photograph you are reading</dd>
+          <dt><kbd>?</kbd></dt>
+          <dd>this panel</dd>
+        </dl>
+      </section>
+    </div>
+
+    <p class="foot">
+      saved photographs gather in your <a href="/collection">collection</a>.
+    </p>
+  </div>
+</div>
+
+<style>
+  .shortcuts {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    display: grid;
+    place-items: center;
+    padding: var(--pad-edge);
+
+    /* All but opaque, rather than a dim scrim: the band behind it is two
+       hundred pieces of fine detail, and a table read over that is not a
+       table. What little shows through is there to say the archive is still
+       where it was left. */
+    background: rgb(244 244 244 / 97%);
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+
+  /* `hidden` keeps it out of the tab order and off the screen reader entirely
+     while shut; the class is what fades it, one frame later. */
+  .shortcuts[hidden] {
+    display: none;
+  }
+
+  .shortcuts.is-open {
+    opacity: 1;
+  }
+
+  .sheet {
+    width: min(58rem, 100%);
+    max-height: 100%;
+
+    /* Scrolls when the panel outgrows a short window. Overflow on one axis
+       clips the other too, so the sheet keeps a little room for anything
+       sitting against its edge — the close button, in particular. */
+    padding: 0 0.25rem;
+    overflow-y: auto;
+  }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--c-line);
+  }
+
+  h2 {
+    color: var(--c-ink);
+    font-size: var(--fs-base);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+  }
+
+  .close {
+    display: grid;
+    place-items: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    color: var(--c-ink-mute);
+    font-size: 1.25rem;
+    line-height: 1;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+
+  .close:hover {
+    color: var(--c-ink);
+  }
+
+  .groups {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 1.75rem 2.5rem;
+    margin-top: 1.75rem;
+  }
+
+  h3 {
+    margin-bottom: 0.7rem;
+    color: var(--c-accent);
+    font-size: var(--fs-micro);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wider);
+    text-transform: uppercase;
+  }
+
+  dl {
+    display: grid;
+    gap: 0.15rem 0;
+  }
+
+  dt {
+    color: var(--c-ink);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--tracking-wide);
+  }
+
+  dd {
+    margin-bottom: 0.6rem;
+    color: var(--c-ink-mute);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--tracking-wide);
+  }
+
+  kbd {
+    display: inline-block;
+    min-width: 1.5em;
+    padding: 0.1em 0.35em;
+    color: var(--c-ink);
+    font-family: inherit;
+    font-size: 0.95em;
+    text-align: center;
+    border: 1px solid var(--c-line);
+    border-radius: 2px;
+  }
+
+  .or {
+    color: var(--c-ink-faint);
+  }
+
+  .foot {
+    margin-top: 2rem;
+    padding-top: 0.75rem;
+    color: var(--c-ink-mute);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--tracking-wide);
+    border-top: 1px solid var(--c-line);
+  }
+
+  .foot a {
+    color: var(--c-ink);
+    text-decoration: none;
+    border-bottom: 1px solid var(--c-line);
+  }
+
+  .foot a:hover {
+    color: var(--c-accent);
+  }
+</style>

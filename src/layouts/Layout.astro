@@ -1,0 +1,50 @@
+---
+import '@fontsource-variable/space-grotesk'
+import '@/styles/reset.css'
+import '@/styles/tokens.css'
+
+interface Props {
+  title?: string
+  description?: string
+  /**
+   * Let the page scroll. The gallery must not — the wheel drives the band, and
+   * a document scrollbar underneath it fights every gesture — but the
+   * collection is an ordinary page of pictures and has to.
+   */
+  scrollable?: boolean
+}
+
+const {
+  title = 'every : second',
+  description = 'An interactive photographic archive.',
+  scrollable = false,
+} = Astro.props
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+  </head>
+  <body class={scrollable ? 'is-scrollable' : undefined}>
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  body {
+    font-family: var(--font-sans);
+    color: var(--c-ink);
+    background: var(--c-bg);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+  }
+
+  body.is-scrollable {
+    overflow-y: auto;
+  }
+</style>

@@ -1,0 +1,181 @@
+---
+// Where and how a photograph was taken, shown directly beneath it once it is
+// opened. Capture date and time live in the top-left stamp instead, so they are
+// not repeated in the standing caption. Populated by the ribbon controller.
+//
+// `read more` expands the rest of the record in place; `save this picture`
+// keeps it in the viewer's collection. Both act on the opened photograph.
+---
+
+<figcaption class="caption" id="caption" aria-live="polite">
+  <p class="place" data-field="place"></p>
+  <p class="credit" data-field="credit"></p>
+
+  {/* The remainder of the record. Hidden until asked for — the standing caption
+      is what a photograph needs to be read, this is what it takes to be
+      catalogued. Deliberately not a repeat of the stamp: date and time are
+      already on screen. This is also where a photograph's own text belongs
+      once the manifest carries real EXIF and real notes. */}
+  <dl class="more" id="caption-more">
+    <div><dt>series</dt><dd data-field="series"></dd></div>
+    <div><dt>frame</dt><dd data-field="frame"></dd></div>
+    <div><dt>format</dt><dd data-field="format"></dd></div>
+  </dl>
+
+  <div class="actions">
+    <button type="button" data-action="read-more" aria-expanded="false" aria-controls="caption-more">
+      <span class="glyph" aria-hidden="true" data-field="read-more-glyph">&#8600;</span>
+      <span data-field="read-more-label">read more</span>
+    </button>
+    <button type="button" data-action="save-photo" aria-pressed="false">
+      <span class="glyph" aria-hidden="true" data-field="save-glyph">&#9634;</span>
+      <span data-field="save-label">save this picture</span>
+    </button>
+  </div>
+</figcaption>
+
+<style>
+  /*
+   * Anchored to the opened photograph rather than to the viewport corner. The
+   * controller publishes the photo's rendered size as --open-w / --open-h; the
+   * photo itself sits centred, so half of each gets us to its edges. Sitting in
+   * a corner instead put this on top of the neighbouring stacks.
+   */
+  .caption {
+    position: fixed;
+    top: calc(50% + var(--open-h, 0px) / 2 + 0.85rem);
+    left: calc(50% - var(--open-w, 0px) / 2 + var(--open-w, 0px) / 7);
+    z-index: var(--z-chrome);
+    max-width: 24rem;
+    padding-left: 0.85rem;
+    border-left: 1px solid var(--c-line);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+
+  /* Only once a photograph is actually open — while browsing, the stamp alone
+     carries the reading, as in the reference art direction. */
+  :global([data-mode='detail']) .caption {
+    opacity: 1;
+    pointer-events: auto;
+
+    /* Let the photograph finish arriving before its caption does. */
+    transition-delay: 0.2s;
+  }
+
+  p {
+    font-size: var(--fs-micro);
+    line-height: 1.7;
+    letter-spacing: var(--tracking-wide);
+  }
+
+  .place {
+    color: var(--c-ink);
+    font-weight: 500;
+    text-transform: uppercase;
+  }
+
+  .credit {
+    color: var(--c-ink-mute);
+    text-transform: uppercase;
+  }
+
+  /*
+   * Only the expansion is animated here, never the caption's own position:
+   * `top` follows --open-h, which the loop rewrites as the photograph makes
+   * room, and a transition on it would lag a frame behind the picture.
+   */
+  .more {
+    display: grid;
+    grid-template-rows: 0fr;
+    margin-top: 0;
+    opacity: 0;
+    transition:
+      grid-template-rows var(--dur-base) var(--ease-out),
+      margin-top var(--dur-base) var(--ease-out),
+      opacity var(--dur-fast) var(--ease-out);
+  }
+
+  .caption.is-expanded .more {
+    grid-template-rows: 1fr;
+    margin-top: 0.7rem;
+    opacity: 1;
+  }
+
+  .more > div {
+    display: grid;
+    grid-template-columns: 5rem 1fr;
+    gap: 0.6rem;
+
+    /* The row is the thing being collapsed, so nothing inside it may keep its
+       own height. */
+    overflow: hidden;
+  }
+
+  dt,
+  dd {
+    font-size: var(--fs-micro);
+    line-height: 1.7;
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+  }
+
+  dt {
+    color: var(--c-ink-faint);
+  }
+
+  dd {
+    color: var(--c-ink-mute);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+    margin-top: 0.7rem;
+  }
+
+  .actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    color: var(--c-ink-mute);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--tracking-wide);
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+
+  .actions button:hover {
+    color: var(--c-accent);
+  }
+
+  /* Saved reads as committed, the same as the toolbar's bookmark. */
+  .actions button[aria-pressed='true'] {
+    color: var(--c-accent);
+  }
+
+  .glyph {
+    display: inline-block;
+    width: 1em;
+    font-size: 0.9em;
+  }
+
+  /*
+   * The photograph takes almost the whole width on a phone, so inset from its
+   * left edge is indistinguishable from inset from the screen's — and the
+   * 24rem measure no longer fits inside either.
+   */
+  @media (width < 720px) {
+    .caption {
+      left: var(--pad-edge);
+      max-width: calc(100% - 2 * var(--pad-edge));
+    }
+
+    .more > div {
+      grid-template-columns: 4rem 1fr;
+    }
+  }
+</style>

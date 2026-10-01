@@ -1,0 +1,1855 @@
+---
+import type { ImageMetadata } from 'astro'
+import { getImage } from 'astro:assets'
+import { photos } from '@/data/photos'
+
+// Photos live in src/assets so Astro's pipeline can emit sized variants; the
+// manifest carries only metadata, joined here by filename.
+const sources = import.meta.glob<{ default: ImageMetadata }>(
+  '/src/assets/photos/*.webp',
+  { eager: true },
+)
+
+// Two variants per photo: a thumbnail for the stack, and a large file swapped
+// in when a photo is opened.
+//
+// The thumbnail is deliberately small. Every one of these is on screen at once,
+// so the browser holds all 200 decoded bitmaps simultaneously — and decoded
+// size depends on pixel dimensions, not file size. At 480w that is ~120MB of
+// bitmap for images drawn about 100px wide, which pushes Chrome past what it
+// will rasterise: it gives up on the far half of the band and paints bare
+// boxes. 240w covers the largest size a stacked frame is ever drawn at.
+const frames = await Promise.all(
+  photos.map(async (photo) => {
+    const asset = sources[`/src/assets/photos/${photo.file}`]
+    if (!asset) {
+      throw new Error(`No image asset found for ${photo.file}`)
+    }
+
+    const [thumb, full] = await Promise.all([
+      getImage({ src: asset.default, width: 240, format: 'webp', quality: 74 }),
+      getImage({ src: asset.default, width: 1400, format: 'webp', quality: 82 }),
+    ])
+
+    return { photo, thumb, full }
+  }),
+)
+
+const total = frames.length
+---
+
+<div class="stack" id="stack">
+  {/* The soft pool the reference has lying under each stack. Two elements, not
+      two hundred: a shadow per frame is exactly the per-element cost the
+      rendering budget cannot carry, and what the reference actually shows is
+      one pool under each block of prints. The controller stretches these along
+      the band's own axis, so in the overview they meet in the middle as a
+      single pool and in detail they part with the stacks. */}
+  <div class="pool pool-before" aria-hidden="true"></div>
+  <div class="pool pool-after" aria-hidden="true"></div>
+  {
+    frames.map(({ photo, thumb, full }, index) => (
+      <div
+        class="slot"
+        data-index={index}
+        data-tags={photo.tags.join(' ')}
+        style={`z-index:${total - index}`}
+      >
+        <figure class="frame">
+          {/* Every frame is genuinely on screen, so lazy loading would only
+              make paint order unpredictable without saving a request. */}
+          <img
+            src={thumb.src}
+            data-thumb={thumb.src}
+            data-full={full.src}
+            width={thumb.attributes.width}
+            height={thumb.attributes.height}
+            alt={`${photo.location.city}, ${photo.location.country}`}
+            draggable="false"
+            loading="eager"
+            decoding="async"
+          />
+        </figure>
+      </div>
+    ))
+  }
+</div>
+
+{/* Purely an affordance — it marks where a click will land, and stays out of
+    the pointer's way so it can't steal the hover that positions it. */}
+<div class="peek" id="peek" aria-hidden="true">
+  <svg viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="11" />
+    <path d="M12 7v10M7 12h10" />
+  </svg>
+</div>
+
+<style>
+  .stack {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 100dvw;
+    height: 100dvh;
+    cursor: crosshair;
+
+    /* Fingers drive the band directly, so the browser must not claim the
+       gesture for panning or double-tap zoom — doing so cancels the pointer
+       stream partway through a drag. */
+    touch-action: none;
+
+    /* Keep the stack's paint and layout isolated from the fixed chrome. */
+    contain: layout paint style;
+  }
+
+  /*
+   * Sized and placed entirely by the loop, like everything else in the band.
+   * A gradient rather than a `filter: blur()` — the blur would have to be
+   * recomputed every time the pool is stretched, while a gradient is just a
+   * cheap fill the compositor scales.
+   *
+   * z-index 0 puts it under every slot: those run from `total` down to 1.
+   */
+  .pool {
+    position: absolute;
+    z-index: 0;
+    width: 200px;
+    height: 120px;
+    pointer-events: none;
+
+    /* Soft across the band, so the pool reads as light leaking out from under
+       a pile of prints rather than as a drawn shape. */
+    background: linear-gradient(
+      to bottom,
+      rgb(30 30 30 / 0%),
+      rgb(30 30 30 / 26%) 50%,
+      rgb(30 30 30 / 0%)
+    );
+    opacity: 0;
+  }
+
+  /*
+   * The ends are faded by a mask instead of by the gradient itself, because the
+   * two pools meet: each is soft at the end that runs out into nothing, and
+   * nearly square at the end that meets its neighbour. Fading both ends would
+   * pinch a bright notch into the middle of the overview, where the two halves
+   * are in fact one continuous stack.
+   */
+  .pool-before {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 18%, #000 96%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 18%, #000 96%, transparent);
+  }
+
+  .pool-after {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 4%, #000 82%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 4%, #000 82%, transparent);
+  }
+
+  .slot {
+    position: absolute;
+
+    /* Hit testing has to follow the photo you can see, not the slot's box.
+       A slot's box stays an unrotated 300x200 while the visible photo is a
+       small parallelogram in the middle of it, so neighbouring boxes overlap
+       almost completely and clicks land on whichever sits highest — rarely the
+       one under the cursor. Handing pointer events to the image instead means
+       the browser tests against the transformed geometry. */
+    pointer-events: none;
+
+    /* Positions come from the rAF loop, which writes `transform` directly.
+       No CSS transition here on purpose: easing happens in the controller so
+       scroll momentum, mode changes and fan-out all share one motion model
+       instead of fighting a fixed-duration transition.
+
+       Deliberately no `will-change` either — see .frame below. */
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+
+  /* Photos filtered out by the series panel fade rather than vanish, so the
+     band visibly thins out instead of jumping. */
+  .slot.is-dimmed {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* The image has to be silenced explicitly. `.frame img` re-enables pointer
+     events to make hit testing follow the rotated photo, and a child turning
+     them back on overrides `none` on its parent — so without this the faded-out
+     photos stay hit-testable at their stale positions, interleaved with the
+     visible band. Clicks then land on a slot whose rank is -1 and are dropped,
+     which reads as "opening a photo only works on the all tab". */
+  .slot.is-dimmed .frame img {
+    pointer-events: none;
+  }
+
+  .frame {
+    /* Fixed box scaled by transform — animating width/height instead would
+       force layout on every frame for all 200 slots. */
+    width: 300px;
+    height: 200px;
+    display: grid;
+    place-items: center;
+
+    /* A near-orthographic projection: the large perspective value keeps the
+       isometric read while leaving room to fall back to real perspective when
+       a photo flattens out. */
+    transform:
+      perspective(5000px)
+      rotateX(-45deg)
+      rotateY(-45deg)
+      scale(var(--frame-scale, 0.34));
+    transform-origin: center;
+    backface-visibility: hidden;
+
+    /* No CSS transition on this transform. `--frame-scale` is driven by the
+       rAF loop, so a transition here would restart an 800ms animation on all
+       200 frames every single frame — enough style and composite churn to
+       starve the loop and lock up the renderer. The opening photo is eased in
+       the loop instead, which keeps one motion model for everything.
+
+       No `will-change` either: hinting 200 slots and 200 frames blows past
+       Chrome's compositing budget, and layers it declines to promote stop
+       being rasterised at all — the far half of the band renders as blank
+       boxes. Transforms are still GPU-accelerated without the hint. */
+  }
+
+  .frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    user-select: none;
+    background: var(--c-bg-deep);
+    pointer-events: auto;
+  }
+
+  /* Detail: the photo rotates square to the viewer and takes the frame. Its
+     transform is written inline by the loop, which is why there is no rule for
+     it here — only the things the loop does not animate. */
+  .slot.is-open {
+    z-index: 999 !important;
+  }
+
+  .slot.is-open .frame {
+    /* The one frame worth promoting: it carries the largest image and is the
+       only element animating on its own. */
+    will-change: transform;
+  }
+
+  .slot.is-open .frame img {
+    object-fit: contain;
+    background: none;
+  }
+
+  /* Hover affordance that tracks the fanned-open point of the band. */
+  .peek {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: var(--z-chrome);
+    width: 1.5rem;
+    height: 1.5rem;
+    color: var(--c-ink);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+
+  .peek.is-visible {
+    opacity: 1;
+  }
+
+  .peek svg {
+    width: 100%;
+    height: 100%;
+    fill: var(--c-bg);
+    stroke: currentcolor;
+    stroke-width: 1;
+    stroke-linecap: round;
+  }
+
+</style>
+
+<script>
+import type { Photo } from '@/data/photos'
+import type { RibbonMode, RibbonParams, TimeMarker } from '@/lib/ribbon'
+import { photos } from '@/data/photos'
+import {
+  isSaved,
+  onCollectionChange,
+  savedCount,
+  toggleSaved,
+} from '@/lib/collection'
+import {
+  AXIS,
+  AXIS_ANGLE,
+  AXIS_NORMAL,
+  clampScroll,
+  createJitter,
+  damp,
+  indexAtPoint,
+  MODE_PARAMS,
+  positionAt,
+  timeMarkers,
+} from '@/lib/ribbon'
+
+// --- Tuning ---------------------------------------------------------------
+
+/**
+ * Wheel delta to fractional-index conversion.
+ *
+ * One notch (deltaY 120) glides roughly
+ * `120 * SCROLL_SENSITIVITY / (1 - MOMENTUM_DAMPING)` photos. Deliberately
+ * gentle: the reference visualises thousands of frames, but a few hundred
+ * means a single flick at that rate crosses a quarter of the collection.
+ */
+const SCROLL_SENSITIVITY = 0.005
+/**
+ * Wheel delta to fractional-index conversion for the overview's fan.
+ *
+ * Applied straight to the focus rather than through momentum, so a notch moves
+ * the marker a definite few photographs instead of launching a glide — the
+ * point there is to land on one, not to travel.
+ */
+const FOCUS_SENSITIVITY = 0.03
+/** Per-frame retention of scroll velocity — the glide after a flick. */
+const MOMENTUM_DAMPING = 0.9
+/** Below this the glide is over and the loop can idle. */
+const MOMENTUM_EPSILON = 0.0008
+/** Retention factors for eased values; lower settles faster. */
+const SCROLL_SMOOTHING = 0.78
+const PARAM_SMOOTHING = 0.86
+const FOCUS_SMOOTHING = 0.7
+/** Slack allowed past either end before the band is pulled back. */
+const OVERSCROLL = 3
+/**
+ * Length along the axis, in px, that the overview band aims to occupy at
+ * minimum. Only bites for small sets — a series of a dozen photographs would
+ * otherwise render at the same tight spacing as the full collection and read
+ * as a clump rather than an archive.
+ */
+const MIN_BAND_LENGTH = 620
+/**
+ * Viewport width, in px, below which the layout is treated as a phone. An
+ * opened photograph then takes nearly the full width: there are no neighbouring
+ * stacks flanking it at that size to stay clear of.
+ */
+const NARROW_VIEWPORT = 720
+/** Share of the viewport width an opened photograph may occupy. */
+const OPEN_WIDTH_WIDE = 0.62
+const OPEN_WIDTH_NARROW = 0.92
+/**
+ * Share of the viewport height an opened photograph may occupy. Short of the
+ * full height either way: the caption sits underneath it, and on a phone it
+ * wraps to more lines than it does on a desktop.
+ */
+const OPEN_HEIGHT_WIDE = 0.6
+const OPEN_HEIGHT_NARROW = 0.5
+/**
+ * Height the photograph gives up while `read more` is open, as a share of the
+ * viewport. The expanded record is anchored to the photograph's lower edge, so
+ * the room for it has to come from the photograph rather than from the bottom
+ * of the screen — otherwise the last rows fall off a laptop display.
+ */
+const EXPAND_HEIGHT_COST = 0.13
+/**
+ * Clear space kept between an opened photograph and the stacks either side, as
+ * a share of the photograph's own size. Proportional rather than absolute so
+ * the composition holds together at any resolution.
+ */
+const DETAIL_CLEARANCE = 0.25
+/**
+ * Distance along the band's axis, in px, that a finger travels to advance one
+ * photograph in detail view — the touch equivalent of one wheel notch.
+ */
+const SWIPE_STEP = 56
+/** Movement below this is still a tap rather than a drag. */
+const TAP_SLOP = 10
+/**
+ * How long the swipe hint stays up, in ms, measured from the tap that opened
+ * the photograph — so roughly four seconds of reading once its entrance delay
+ * has been spent. Long enough to be noticed, short enough that it is gone
+ * before the viewer has settled into looking at the picture.
+ */
+const HINT_LINGER = 4500
+/** How long a toolbar note — "link copied", "saved" — stays up, in ms. */
+const NOTE_LINGER = 2400
+/**
+ * Ticks the time axis may carry. `timeMarkers()` picks the finest granularity
+ * that fits inside this, so the number is really a statement about how many
+ * dates can sit along the band before it reads as a ruler rather than a scale.
+ */
+const MAX_MARKERS_WIDE = 6
+const MAX_MARKERS_NARROW = 4
+/** Gap, in px, between a tick's label and the edge of the photograph it marks. */
+const MARK_CLEARANCE = 12
+/**
+ * The pooled shadow under each stack, as shares of a frame's drawn size: how
+ * far below the band's centre line the pool sits, how thick it is, and how far
+ * past the end photographs it spills.
+ */
+const POOL_DROP = 0.42
+const POOL_THICKNESS = 1.15
+const POOL_OVERHANG = 0.8
+/** Ink of the pool at its densest — the packed overview — and at its thinnest. */
+const POOL_OPACITY_DENSE = 0.85
+const POOL_OPACITY_SPARSE = 0.25
+/** Spacing, in px past the overview's own, at which the pool has thinned out. */
+const POOL_FADE_GAP = 60
+
+// --- Elements -------------------------------------------------------------
+
+const app = document.getElementById('app')
+const stack = document.getElementById('stack')
+const peek = document.getElementById('peek')
+const caption = document.getElementById('caption')
+const stamp = document.getElementById('stamp')
+const swipeHint = document.getElementById('swipe-hint')
+const timeAxis = document.getElementById('time-axis')
+const shortcuts = document.getElementById('shortcuts')
+const toolbarNote = document.getElementById('toolbar-note')
+const tagButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('.tag[data-tag]'),
+)
+
+/**
+ * Chrome the controller drives. Both save buttons — the toolbar's bookmark and
+ * the caption's line of text — are the same action on the same photograph, so
+ * they are held together and always written at once.
+ */
+const saveButtons = Array.from(document.querySelectorAll<HTMLElement>(
+  '[data-action="save"], [data-action="save-photo"]',
+))
+const toolbarSave = document.querySelector<HTMLElement>('[data-action="save"]')
+const helpButton = document.querySelector<HTMLElement>('[data-action="help"]')
+const readMoreButton = document.querySelector<HTMLElement>('[data-action="read-more"]')
+const savedCountField = document.querySelector<HTMLElement>('[data-field="saved-count"]')
+
+if (app && stack && peek) {
+  const slots = Array.from(stack.querySelectorAll<HTMLElement>('.slot'))
+  const count = slots.length
+
+  // --- State --------------------------------------------------------------
+
+  let mode: RibbonMode = 'ribbon'
+  /** Fractional index currently centred, and where it is heading. */
+  let scrollPos = 0
+  let scrollTarget = 0
+  let velocity = 0
+  /** Fractional index under the cursor. */
+  let focusPos = 0
+  let focusTarget = 0
+  /** 0 = band closed, 1 = fully fanned. Eased so the fan breathes. */
+  let hover = 0
+  let hoverTarget = 0
+  /** Index (into the filtered list) of the photo being browsed or opened. */
+  let openRank: number | null = null
+  /**
+   * Slots carrying an inline frame transform, with how far each is opened
+   * (0 = sitting in the stack, 1 = flattened and filling the frame).
+   *
+   * A map rather than a single reference because stepping through photos in
+   * detail view leaves the outgoing one mid-flight: it still has to ease back
+   * into the band while its replacement opens. Entries are deleted once they
+   * settle shut, so this holds at most two.
+   */
+  const openFrames = new Map<HTMLElement, { amount: number, target: number }>()
+  let activeTag = 'all'
+
+  /**
+   * The finger currently dragging the band, if any, and where it started.
+   *
+   * Touch has neither a wheel nor arrow keys, so the drag has to carry both
+   * jobs the pointer does on desktop: traversing the band and stepping between
+   * photographs once one is open.
+   */
+  let dragId: number | null = null
+  let dragStartX = 0
+  let dragStartY = 0
+  /** Axis distance already spent — on steps in detail, on scroll in browse. */
+  let dragLastU = 0
+  /** Index movement of the last drag update, handed to momentum on release. */
+  let dragVelocity = 0
+  /** Whether this gesture travelled far enough to be a drag, not a tap. */
+  let dragged = false
+  /** Whether the last thing to touch the stack was a finger rather than a mouse. */
+  let touchInput = false
+  /** Set once the viewer has swiped a photograph away, which retires the hint. */
+  let swipeLearned = false
+  let hintTimer = 0
+  let noteTimer = 0
+
+  /**
+   * The photograph currently being *read* — whatever the stamp is showing.
+   *
+   * Saving and sharing act on this rather than on an opened photograph, so both
+   * work from the overview as well: the viewer has already picked something out
+   * by the time the stamp names it.
+   */
+  let currentRank = 0
+  /** Whether the caption's full record is open, and how far it has eased. */
+  let expanded = false
+  let expand = 0
+  let expandTarget = 0
+  let helpOpen = false
+  /** Ticks of the time axis, paired with the rank each is pinned to. */
+  let marks: { rank: number, el: HTMLElement }[] = []
+  /** Last viewport class the chrome was built for; the axis thins on a phone. */
+  let narrowLayout = window.innerWidth < NARROW_VIEWPORT
+  /** Last permalink written, so a settled detail view stops rewriting history. */
+  let lastPermalink = ''
+
+  const params: RibbonParams = { ...MODE_PARAMS.ribbon }
+  // Enough scatter to read as a stack of prints rather than a machined comb,
+  // but not so much that the band's edge turns into noise.
+  const jitter = createJitter(count, MODE_PARAMS.ribbon.gap * 0.8)
+  /** For anything positioned by the band rather than by one photograph in it. */
+  const NO_JITTER = { x: 0, y: 0 }
+
+  // The frame's own box, measured rather than restated here so it cannot drift
+  // away from the stylesheet.
+  const firstFrame = stack.querySelector<HTMLElement>('.frame')!
+  const frameWidth = firstFrame.offsetWidth
+  const frameHeight = firstFrame.offsetHeight
+
+  // The two pooled shadows, and the box the stylesheet gives them — measured
+  // for the same reason the frame is, so the scale factors below stay correct
+  // if the gradient is ever resized.
+  const pools = Array.from(stack.querySelectorAll<HTMLElement>('.pool'))
+  const poolWidth = pools[0]?.offsetWidth ?? 1
+  const poolHeight = pools[0]?.offsetHeight ?? 1
+
+  /** Capture times, parsed once: the time axis re-buckets these on every filter. */
+  const captureTimes = photos.map(photo => Date.parse(photo.capturedAt))
+
+  /** Filtered list of slot indices, and the reverse lookup into it. */
+  let visible: number[] = slots.map((_, i) => i)
+  const rankOf = new Int32Array(count)
+
+  let running = false
+  let lastTime = 0
+  let lastFrameScale = ''
+  let lastOpenSize = ''
+
+  /**
+   * The top-left stamp tracks the band continuously rather than only on
+   * selection, so it reads as a position in time while scrolling. This keeps
+   * that from writing to the DOM on every frame of a scroll.
+   */
+  let lastStamped = -1
+
+  // --- Filtering ----------------------------------------------------------
+
+  function applyFilter(tag: string): void {
+    activeTag = tag
+    visible = []
+
+    slots.forEach((slot, index) => {
+      const tags = (slot.dataset.tags ?? '').split(' ')
+      const matches = tag === 'all' || tags.includes(tag)
+
+      slot.classList.toggle('is-dimmed', !matches)
+      rankOf[index] = matches ? visible.length : -1
+
+      if (matches) {
+        visible.push(index)
+      }
+    })
+
+    tagButtons.forEach((button) => {
+      button.setAttribute(
+        'aria-pressed',
+        button.dataset.tag === tag ? 'true' : 'false',
+      )
+    })
+
+    // Filtering always lands back in the overview, which sits centred on its
+    // own band — so there is no position to carry across, only the new middle.
+    // Snapped rather than eased: the band is re-fitted to a different length at
+    // the same time, and gliding through that reads as a stumble.
+    scrollTarget = bandCentre()
+    scrollPos = scrollTarget
+    velocity = 0
+
+    // A rank means a different photograph once the list changes, so the stamp's
+    // cached rank can no longer be trusted to mean "unchanged".
+    lastStamped = -1
+
+    // Same trap: the marks are pinned to ranks, and a filtered band is a
+    // different run of dates at different ranks. They are rebuilt here rather
+    // than in the loop because this is the only thing that changes them.
+    buildTimeAxis()
+
+    setMode('ribbon')
+    wake()
+  }
+
+  // --- Modes --------------------------------------------------------------
+
+  /**
+   * The rank the overview sits on: the middle of the band.
+   *
+   * `fittedRibbonGap()` sizes the band to the space available, which only
+   * actually fits while the band is centred on its own midpoint — anchored
+   * anywhere else it hangs off one corner by however far that point is from
+   * the middle. The two belong together: one sets the length, this one sets
+   * where that length is hung from.
+   */
+  function bandCentre(): number {
+    return Math.max(0, visible.length - 1) / 2
+  }
+
+  /**
+   * Offer the swipe hint, or take it away.
+   *
+   * Only a finger is told. The desktop already answers this question twice over
+   * with the wheel and the arrow keys, and both are things a viewer arrives
+   * expecting — a gesture is the only one of the three that has to be named.
+   */
+  function offerSwipeHint(show: boolean): void {
+    window.clearTimeout(hintTimer)
+
+    if (!swipeHint) {
+      return
+    }
+
+    if (!show || !touchInput || swipeLearned) {
+      swipeHint.classList.remove('is-visible')
+      return
+    }
+
+    swipeHint.classList.add('is-visible')
+    hintTimer = window.setTimeout(() => offerSwipeHint(false), HINT_LINGER)
+  }
+
+  function setMode(next: RibbonMode): void {
+    if (mode === next) {
+      return
+    }
+
+    mode = next
+    app!.dataset.mode = next
+    offerSwipeHint(next === 'detail')
+
+    // A photograph is only ever flattened out in detail. Leaving it open on the
+    // way back to browse stranded it at full size with its caption already gone.
+    if (next !== 'detail') {
+      closePhoto()
+      // The expanded record belongs to the caption, which leaves with the
+      // photograph — and it is also holding the picture's own size down.
+      setExpanded(false)
+    }
+
+    if (next === 'ribbon') {
+      openRank = null
+
+      // Come back from a photograph deep in the collection and the band would
+      // otherwise stay anchored on it, hanging off the bottom-left corner. The
+      // overview has to read as the whole archive at once, so it always
+      // returns to the middle — eased, so the band visibly gathers itself back
+      // up rather than cutting.
+      scrollTarget = bandCentre()
+      velocity = 0
+    }
+
+    syncPermalink()
+    wake()
+  }
+
+  /**
+   * Honour a `?photo=` link, which is what the share button hands out and what
+   * the collection page links back to.
+   *
+   * Snapped rather than eased: arriving on a photograph two hundred frames
+   * along should not open with a flight down the whole band, which reads as the
+   * page having started somewhere else and changed its mind.
+   */
+  function openInitialPhoto(): void {
+    const wanted = new URLSearchParams(window.location.search).get('photo')
+    if (!wanted) {
+      return
+    }
+
+    const index = photos.findIndex(photo => photo.id === wanted)
+    const rank = index < 0 ? -1 : rankOf[index]!
+    if (rank < 0) {
+      return
+    }
+
+    focusRank(rank, true)
+    scrollPos = scrollTarget
+    focusPos = scrollTarget
+    focusTarget = scrollTarget
+  }
+
+  /** Swap a slot's thumbnail for the larger file before it fills the frame. */
+  async function openPhoto(rank: number): Promise<void> {
+    const slotIndex = visible[rank]
+    if (slotIndex === undefined) {
+      return
+    }
+
+    closePhoto()
+
+    const slot = slots[slotIndex]!
+    const img = slot.querySelector('img')!
+    const full = img.dataset.full
+
+    slot.classList.add('is-open')
+    // Reuse the entry if this slot is still easing shut from a moment ago, so
+    // it reverses from where it is instead of jumping back to the stack first.
+    const entry = openFrames.get(slot) ?? { amount: 0, target: 1 }
+    entry.target = 1
+    openFrames.set(slot, entry)
+
+    if (full && img.src !== full) {
+      // Decode off-screen first, so the frame never shows a half-painted swap.
+      const preload = new Image()
+      preload.src = full
+      try {
+        await preload.decode()
+      }
+      catch {
+        // A failed decode just means we keep showing the thumbnail.
+        return
+      }
+      if (slot.classList.contains('is-open')) {
+        img.src = full
+      }
+    }
+  }
+
+  /**
+   * Send every open frame back towards the stack.
+   *
+   * Also drops back to the thumbnail: leaving the 1400px file in place would
+   * let every photo the viewer opens accumulate a full-size bitmap for the
+   * rest of the session.
+   */
+  function closePhoto(): void {
+    for (const [slot, entry] of openFrames) {
+      if (entry.target === 0) {
+        continue
+      }
+
+      entry.target = 0
+      slot.classList.remove('is-open')
+
+      const img = slot.querySelector('img')!
+      const thumb = img.dataset.thumb
+      if (thumb) {
+        img.src = thumb
+      }
+    }
+  }
+
+  /**
+   * Spacing that keeps the whole band inside the viewport.
+   *
+   * The overview is meant to show the collection as one contained object, so
+   * the band has to fit rather than run off the corners. Collection size is not
+   * fixed — photographs get added and series filtered — so this is derived
+   * rather than tuned, with `MODE_PARAMS.ribbon.gap` acting as the ceiling for
+   * small sets that would otherwise sprawl.
+   */
+  function fittedRibbonGap(): number {
+    const span = Math.max(1, visible.length - 1)
+    const { width, height } = drawnFrameSize()
+
+    // Room left for the band's axis once a frame's own footprint is spent.
+    const maxLength = Math.max(1, Math.min(
+      (window.innerWidth * 0.92 - width) / Math.abs(AXIS.x),
+      (window.innerHeight * 0.88 - height) / Math.abs(AXIS.y),
+    ))
+
+    // Hold the preferred density while the set is big enough to earn it, but
+    // spread a small one out rather than letting a filtered series collapse
+    // into a thumbnail-sized clump. Never past what fits.
+    const spread = Math.max(MODE_PARAMS.ribbon.gap, MIN_BAND_LENGTH / span)
+
+    return Math.min(maxLength / span, spread)
+  }
+
+  /**
+   * On-screen footprint of one frame at ribbon scale. Measured, because the
+   * isometric rotation foreshortens the 300x200 box by an amount that is
+   * fiddly to restate correctly in code.
+   *
+   * Ribbon scale specifically: the loop's first tick runs before `--frame-scale`
+   * has ever been written, so what gets measured is the stylesheet's fallback,
+   * which is the overview's own scale.
+   */
+  let cachedDrawnSize: { width: number, height: number } | null = null
+
+  function drawnFrameSize(): { width: number, height: number } {
+    if (!cachedDrawnSize) {
+      const rect = firstFrame.getBoundingClientRect()
+      // Before the first paint the box can measure zero; fall back to the
+      // untransformed size rather than caching a useless value.
+      cachedDrawnSize = rect.width > 0
+        ? { width: rect.width, height: rect.height }
+        : { width: frameWidth, height: frameHeight }
+    }
+    return cachedDrawnSize
+  }
+
+  /** The same footprint at any other scale — the transform is linear in it. */
+  function frameFootprint(scale: number): { width: number, height: number } {
+    const base = drawnFrameSize()
+    const ratio = scale / MODE_PARAMS.ribbon.frameScale
+    return { width: base.width * ratio, height: base.height * ratio }
+  }
+
+  /**
+   * How far the stacks either side are pushed clear of the opened photograph.
+   *
+   * `MODE_PARAMS.detail.groupGap` is a floor, not the value used. The push has
+   * to be derived because the thing it is clearing is not a fixed size:
+   * `openScale()` grows the photograph with the viewport, so a constant that
+   * leaves a comfortable margin on a laptop has the neighbours overlapping the
+   * picture outright by 1920 wide. Deriving it from the photograph's own box
+   * keeps the clearance reading the same at every resolution.
+   *
+   * Both axes are checked. The band arrives on a 31° diagonal and the frame is
+   * a 3:2 box, so the stacks come in almost exactly at the photograph's corner —
+   * neither the horizontal nor the vertical separation reliably dominates.
+   */
+  function detailGroupGap(): number {
+    const scale = openScale()
+    const room = 1 + DETAIL_CLEARANCE
+    const near = frameFootprint(MODE_PARAMS.detail.frameScale)
+
+    return Math.max(
+      MODE_PARAMS.detail.groupGap,
+      ((frameWidth * scale * room) / 2 + near.width / 2) / Math.abs(AXIS.x),
+      ((frameHeight * scale * room) / 2 + near.height / 2) / Math.abs(AXIS.y),
+    )
+  }
+
+  /**
+   * How far an opened photo scales up to sit comfortably in the viewport.
+   *
+   * Each viewport budget is divided by the box dimension it actually
+   * constrains. Dividing the height budget by the box *width* leaves the photo
+   * far smaller than the space allows whenever the viewport is short.
+   */
+  function openScale(): number {
+    // On a phone 62% of the width leaves a stamp-sized picture, and the
+    // neighbouring stacks the margin protects are pushed off-screen there
+    // anyway — so the photograph is allowed to take almost the whole width.
+    const narrow = window.innerWidth < NARROW_VIEWPORT
+    const widthFraction = narrow ? OPEN_WIDTH_NARROW : OPEN_WIDTH_WIDE
+
+    // Leaves the bottom of the viewport clear for the caption that sits beneath
+    // the photograph; filling the height would collide with it. `expand` is
+    // eased by the loop, so opening the full record shrinks the picture at the
+    // same rate as the record grows rather than snapping it smaller.
+    const heightFraction
+      = (narrow ? OPEN_HEIGHT_NARROW : OPEN_HEIGHT_WIDE) - EXPAND_HEIGHT_COST * expand
+
+    return Math.min(
+      (window.innerWidth * widthFraction) / frameWidth,
+      (window.innerHeight * heightFraction) / frameHeight,
+    )
+  }
+
+  function focusRank(rank: number, open: boolean): void {
+    openRank = clampScroll(Math.round(rank), visible.length)
+    scrollTarget = openRank
+    velocity = 0
+
+    setMode(open ? 'detail' : 'browse')
+
+    if (open) {
+      void openPhoto(openRank)
+    }
+    else {
+      closePhoto()
+    }
+
+    updateCaption(openRank)
+    syncPermalink()
+    wake()
+  }
+
+  // --- Metadata readouts --------------------------------------------------
+
+  const timeFormat = new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+  const dateFormat = new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+
+  function photoAt(rank: number): Photo | undefined {
+    const slotIndex = visible[rank]
+    return slotIndex === undefined ? undefined : photos[slotIndex]
+  }
+
+  function updateCaption(rank: number): void {
+    const photo = photoAt(rank)
+    if (!caption || !photo) {
+      return
+    }
+
+    const { exif } = photo
+
+    setField(caption, 'place', `${photo.location.city}, ${photo.location.country}`)
+    setField(
+      caption,
+      'credit',
+      `${exif.body} · ${exif.lens} · ${exif.aperture} · ${exif.shutter} · ISO ${exif.iso}`,
+    )
+
+    // The expanded record. `frame` counts through the whole archive rather than
+    // the filtered band: it is the photograph's place in the collection, which
+    // does not change because a series is being looked at.
+    const slotIndex = visible[rank]
+    setField(caption, 'series', photo.tags.join(', '))
+    setField(
+      caption,
+      'frame',
+      slotIndex === undefined ? '—' : `no. ${slotIndex + 1} of ${photos.length}`,
+    )
+    setField(caption, 'format', `${photo.width} × ${photo.height} · ${photo.orientation}`)
+  }
+
+  /**
+   * Record which photograph the viewer is on, and say so.
+   *
+   * Called every frame with whatever the band is showing, so it has to be free
+   * when nothing has moved — hence the cached rank. Everything that follows
+   * from "this is the one you are looking at" hangs off here: the stamp, and
+   * the save buttons, which act on it rather than on an opened photograph.
+   */
+  function setReading(rank: number): void {
+    if (rank === lastStamped) {
+      return
+    }
+
+    lastStamped = rank
+    currentRank = rank
+
+    const photo = photoAt(rank)
+    if (!photo) {
+      return
+    }
+
+    if (stamp) {
+      const at = new Date(photo.capturedAt)
+      setField(stamp, 'date', dateFormat.format(at))
+      setField(stamp, 'time', timeFormat.format(at))
+    }
+
+    syncSaveState()
+  }
+
+  function setField(root: HTMLElement, name: string, value: string): void {
+    const node = root.querySelector<HTMLElement>(`[data-field="${name}"]`)
+    if (node) {
+      node.textContent = value
+    }
+  }
+
+  // --- Saving, sharing, and the rest of the record ------------------------
+
+  /**
+   * Flash a line beside the toolbar.
+   *
+   * Both of the actions it reports leave nothing behind on screen — a copied
+   * link is in the clipboard, a saved picture only tints an icon — so without
+   * this the viewer presses a button and cannot tell whether anything happened.
+   */
+  function note(message: string): void {
+    if (!toolbarNote) {
+      return
+    }
+
+    window.clearTimeout(noteTimer)
+    toolbarNote.textContent = message
+    toolbarNote.classList.add('is-visible')
+    noteTimer = window.setTimeout(() => {
+      toolbarNote.classList.remove('is-visible')
+    }, NOTE_LINGER)
+  }
+
+  /**
+   * Write the saved state of the photograph being read across the chrome.
+   *
+   * The toolbar bookmark and the caption's line are one action in two places,
+   * and the count in the toolbar belongs to the collection as a whole — so all
+   * three are written together, from whatever the store currently says. That
+   * also makes this the right callback for a change made in another tab.
+   */
+  function syncSaveState(): void {
+    const photo = photoAt(currentRank)
+    const saved = photo !== undefined && isSaved(photo.id)
+
+    for (const button of saveButtons) {
+      button.setAttribute('aria-pressed', saved ? 'true' : 'false')
+    }
+
+    toolbarSave?.setAttribute(
+      'aria-label',
+      saved
+        ? 'Remove this picture from your collection'
+        : 'Save this picture to your collection',
+    )
+
+    if (caption) {
+      setField(caption, 'save-label', saved ? 'saved to collection' : 'save this picture')
+      setField(caption, 'save-glyph', saved ? '▣' : '▢')
+    }
+
+    if (savedCountField) {
+      savedCountField.textContent = String(savedCount())
+    }
+  }
+
+  function toggleSave(): void {
+    const photo = photoAt(currentRank)
+    if (!photo) {
+      return
+    }
+
+    // The chrome is not written here. The store announces the change, and
+    // `syncSaveState` is subscribed to it — one path, whether the edit came
+    // from this button, the other one, or another tab.
+    const saved = toggleSaved(photo.id)
+    note(saved ? 'saved to your collection' : 'removed from your collection')
+  }
+
+  /** A link that opens the archive on one photograph. */
+  function permalink(photo: Photo): string {
+    const url = new URL(window.location.href)
+    url.searchParams.set('photo', photo.id)
+    return url.toString()
+  }
+
+  /**
+   * Keep the address bar on the photograph in hand.
+   *
+   * So a reload, a bookmark or a back button lands where the viewer was, and so
+   * the share button has something true to copy. Replaced rather than pushed:
+   * stepping through a hundred photographs must not bury the page the viewer
+   * arrived from under a hundred history entries.
+   */
+  function syncPermalink(): void {
+    const photo = mode === 'detail' ? photoAt(openRank ?? -1) : undefined
+    const url = new URL(window.location.href)
+
+    if (photo) {
+      url.searchParams.set('photo', photo.id)
+    }
+    else {
+      url.searchParams.delete('photo')
+    }
+
+    const next = url.toString()
+    if (next !== lastPermalink) {
+      lastPermalink = next
+      window.history.replaceState(null, '', next)
+    }
+  }
+
+  async function sharePhoto(): Promise<void> {
+    const photo = photoAt(currentRank)
+    if (!photo) {
+      return
+    }
+
+    const link = permalink(photo)
+    const payload = {
+      title: 'every : second',
+      text: `${photo.location.city}, ${photo.location.country}`,
+      url: link,
+    }
+
+    // A phone's own share sheet is better than anything this page can offer,
+    // and it is the only thing that can reach the apps the viewer actually uses.
+    if (navigator.share && (navigator.canShare?.(payload) ?? true)) {
+      try {
+        await navigator.share(payload)
+      }
+      catch {
+        // Dismissed, or refused. Either way there is nothing to report.
+      }
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(link)
+      note('link copied')
+      return
+    }
+    catch {
+      // No clipboard — an insecure origin, or permission refused.
+    }
+
+    // Failing both, put the link somewhere the viewer can copy it by hand.
+    lastPermalink = link
+    window.history.replaceState(null, '', link)
+    note('link is in the address bar')
+  }
+
+  /**
+   * Open or shut the rest of the record.
+   *
+   * `expandTarget` feeds the loop rather than the stylesheet: the photograph
+   * has to give up the height the record takes, and easing that in the loop is
+   * what keeps the picture shrinking at the same rate as the record grows.
+   */
+  function setExpanded(next: boolean): void {
+    if (expanded === next) {
+      return
+    }
+
+    expanded = next
+    expandTarget = next ? 1 : 0
+    caption?.classList.toggle('is-expanded', next)
+
+    if (readMoreButton) {
+      readMoreButton.setAttribute('aria-expanded', next ? 'true' : 'false')
+      setField(readMoreButton, 'read-more-label', next ? 'read less' : 'read more')
+      setField(readMoreButton, 'read-more-glyph', next ? '↗' : '↘')
+    }
+
+    wake()
+  }
+
+  /** Raise or dismiss the `?` panel. */
+  function setHelp(open: boolean): void {
+    if (!shortcuts || helpOpen === open) {
+      return
+    }
+
+    helpOpen = open
+    helpButton?.setAttribute('aria-expanded', open ? 'true' : 'false')
+
+    if (open) {
+      shortcuts.hidden = false
+      // Unhiding and fading in the same frame gives the browser no starting
+      // state to animate from, so the panel would appear rather than arrive.
+      requestAnimationFrame(() => shortcuts.classList.add('is-open'))
+      shortcuts.querySelector<HTMLElement>('[data-action="close-shortcuts"]')?.focus()
+      return
+    }
+
+    shortcuts.classList.remove('is-open')
+    helpButton?.focus()
+
+    // Taken out of the tree only once it has faded, so it is never both
+    // invisible and reachable by tab.
+    window.setTimeout(() => {
+      if (!helpOpen) {
+        shortcuts.hidden = true
+      }
+    }, 300)
+  }
+
+  // --- Time axis ----------------------------------------------------------
+
+  const yearLabel = new Intl.DateTimeFormat('en-GB', { year: 'numeric' })
+  const monthLabel = new Intl.DateTimeFormat('en-GB', { month: 'short', year: 'numeric' })
+  const dayLabel = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' })
+  const hourLabel = new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+
+  /** Label at the granularity the run of marks was actually cut at. */
+  function markerLabel(mark: TimeMarker): string {
+    const at = new Date(mark.at)
+
+    switch (mark.unit) {
+      case 'year':
+        return yearLabel.format(at)
+      case 'month':
+        return monthLabel.format(at)
+      case 'week':
+      case 'day':
+        return dayLabel.format(at)
+      case 'hour':
+        return hourLabel.format(at)
+    }
+  }
+
+  /**
+   * Build the ticks for the current band.
+   *
+   * Only ever called when the list itself changes — filtering, or a viewport
+   * that has crossed into phone width and has room for fewer of them. The loop
+   * then only moves what is already there.
+   */
+  function buildTimeAxis(): void {
+    if (!timeAxis) {
+      return
+    }
+
+    timeAxis.textContent = ''
+    marks = []
+
+    const times = visible.map(index => captureTimes[index]!)
+    const max = narrowLayout ? MAX_MARKERS_NARROW : MAX_MARKERS_WIDE
+
+    for (const mark of timeMarkers(times, max)) {
+      const el = document.createElement('div')
+      el.className = 'mark'
+
+      const tick = document.createElement('span')
+      tick.className = 'tick'
+
+      const label = document.createElement('span')
+      label.className = 'label'
+      label.textContent = markerLabel(mark)
+
+      el.append(tick, label)
+      timeAxis.append(el)
+      marks.push({ rank: mark.rank, el })
+    }
+  }
+
+  /**
+   * Pin each tick to its own photograph, pushed clear along the axis normal.
+   *
+   * Positioned by the same function as the photographs, including the fan — a
+   * mark that stayed put while the band parted under it would be pointing at
+   * the wrong picture, which is the one thing a date on a timeline may not do.
+   */
+  function renderTimeAxis(): void {
+    if (marks.length === 0) {
+      return
+    }
+
+    const focus = mode === 'ribbon' ? focusPos : null
+    const clearance = frameFootprint(params.frameScale).height / 2 + MARK_CLEARANCE
+
+    for (const { rank, el } of marks) {
+      const slotIndex = visible[rank]
+      if (slotIndex === undefined) {
+        continue
+      }
+
+      const position = positionAt(
+        rank,
+        scrollPos,
+        focus,
+        params,
+        jitter[slotIndex]!,
+        params.fanStrength * hover,
+      )
+
+      const x = position.x + AXIS_NORMAL.x * clearance
+      const y = position.y + AXIS_NORMAL.y * clearance
+
+      el.style.transform
+        = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) rotate(${AXIS_ANGLE.toFixed(2)}deg) translate(-50%, 0)`
+    }
+  }
+
+  // --- Pooled shadow ------------------------------------------------------
+
+  /**
+   * Lay a soft pool under each stack.
+   *
+   * Two elements stretched along the band, not a shadow on each of two hundred
+   * frames: per-frame shadows are exactly the per-element cost the rendering
+   * budget cannot carry, and a stack of prints casts one pool anyway. The seam
+   * between them is the one `positionAt` already cuts, so the pools part with
+   * the stacks in detail and close back into one in the overview.
+   */
+  function renderPools(): void {
+    const last = visible.length - 1
+    const focus = mode === 'ribbon' ? focusPos : null
+    const fan = params.fanStrength * hover
+
+    // Only the stretch of band near the viewport is worth pooling. In browse
+    // the stacks run thousands of pixels off both corners, and a gradient
+    // stretched across all of that is a layer the size of the band rather than
+    // the size of the screen.
+    const reach = Math.hypot(window.innerWidth, window.innerHeight) / Math.max(1, params.gap)
+    const lo = Math.max(0, Math.floor(scrollPos - reach))
+    const hi = Math.min(last, Math.ceil(scrollPos + reach))
+
+    const ranges: [number, number][] = [
+      [lo, Math.min(hi, Math.floor(scrollPos - 0.5))],
+      [Math.max(lo, Math.ceil(scrollPos + 0.5)), hi],
+    ]
+
+    const footprint = frameFootprint(params.frameScale)
+    // Spread the band out and the pool has to thin out with it: a dense stack
+    // pools, a row of separated photographs does not.
+    const density = Math.max(0, Math.min(
+      1,
+      1 - (params.gap - MODE_PARAMS.ribbon.gap) / POOL_FADE_GAP,
+    ))
+    const ink = POOL_OPACITY_SPARSE + (POOL_OPACITY_DENSE - POOL_OPACITY_SPARSE) * density
+
+    pools.forEach((pool, index) => {
+      const range = ranges[index]
+      if (!range || last < 0 || range[0] > range[1]) {
+        pool.style.opacity = '0'
+        return
+      }
+
+      // No jitter: the pool is under the stack as a whole, so it must not
+      // inherit the scatter of whichever photograph happens to end it.
+      const from = positionAt(range[0], scrollPos, focus, params, NO_JITTER, fan)
+      const to = positionAt(range[1], scrollPos, focus, params, NO_JITTER, fan)
+
+      const length = Math.hypot(to.x - from.x, to.y - from.y) + footprint.width * POOL_OVERHANG
+      const midX = (from.x + to.x) / 2
+      const midY = (from.y + to.y) / 2 + footprint.height * POOL_DROP
+
+      pool.style.opacity = ink.toFixed(3)
+      pool.style.transform
+        = `translate3d(${midX.toFixed(1)}px, ${midY.toFixed(1)}px, 0) `
+          + `rotate(${AXIS_ANGLE.toFixed(2)}deg) `
+          + `scale(${(length / poolWidth).toFixed(3)}, ${((footprint.height * POOL_THICKNESS) / poolHeight).toFixed(3)})`
+    })
+  }
+
+  // --- Render -------------------------------------------------------------
+
+  function render(): void {
+    const effectiveFan = params.fanStrength * hover
+    const focus = mode === 'ribbon' ? focusPos : null
+
+    for (let rank = 0; rank < visible.length; rank++) {
+      const slotIndex = visible[rank]!
+      const slot = slots[slotIndex]!
+      const position = positionAt(
+        rank,
+        scrollPos,
+        focus,
+        params,
+        jitter[slotIndex]!,
+        effectiveFan,
+      )
+
+      slot.style.transform = `translate3d(${position.x.toFixed(2)}px, ${position.y.toFixed(2)}px, 0)`
+    }
+
+    // One inherited custom property drives all 200 frame scales, but writing
+    // it invalidates style on every frame that reads it — so only write when
+    // it has actually moved. During scroll it never changes at all.
+    const scale = params.frameScale.toFixed(4)
+    if (scale !== lastFrameScale) {
+      lastFrameScale = scale
+      stack!.style.setProperty('--frame-scale', scale)
+    }
+
+    // The rendered size of an opened photograph, so the caption can anchor
+    // itself to the photo's lower edge instead of a viewport corner. Only
+    // changes on resize, so the guard makes this a no-op almost every frame.
+    const openSize = `${(frameWidth * openScale()).toFixed(0)}px ${(frameHeight * openScale()).toFixed(0)}px`
+    if (openSize !== lastOpenSize) {
+      lastOpenSize = openSize
+      const [width, height] = openSize.split(' ') as [string, string]
+      app!.style.setProperty('--open-w', width)
+      app!.style.setProperty('--open-h', height)
+    }
+
+    // While the band is fanned open the cursor is what the viewer is reading,
+    // otherwise it is whatever sits at the centre.
+    setReading(clampScroll(
+      Math.round(mode === 'ribbon' && hover > 0.5 ? focusPos : scrollPos),
+      visible.length,
+    ))
+
+    renderOpenFrames()
+    renderPeek()
+    renderTimeAxis()
+    renderPools()
+  }
+
+  /**
+   * Ease the opened photo between its place in the stack and filling the
+   * frame. Driven here rather than by a CSS transition so it shares the
+   * loop's timing with everything else, and so nothing re-triggers when the
+   * surrounding parameters change mid-animation.
+   */
+  function renderOpenFrames(): void {
+    const target = openScale()
+
+    for (const [slot, entry] of openFrames) {
+      const frame = slot.querySelector<HTMLElement>('.frame')!
+
+      if (entry.amount < 0.001 && entry.target === 0) {
+        // Settled shut: hand the frame back to the stylesheet and stop
+        // tracking it, so a slot never keeps a stale inline transform.
+        frame.style.transform = ''
+        openFrames.delete(slot)
+        continue
+      }
+
+      const t = entry.amount
+      const angle = -45 * (1 - t)
+      const depth = 5000 + (800 - 5000) * t
+      const scale = params.frameScale + (target - params.frameScale) * t
+
+      frame.style.transform
+        = `perspective(${depth.toFixed(0)}px) rotateX(${angle.toFixed(2)}deg) rotateY(${angle.toFixed(2)}deg) scale(${scale.toFixed(4)})`
+    }
+  }
+
+  /** Park the ⊕ affordance over the point of the band the cursor has opened. */
+  function renderPeek(): void {
+    const active = mode === 'ribbon' && hover > 0.05
+    peek!.classList.toggle('is-visible', active)
+
+    if (!active) {
+      return
+    }
+
+    const rank = clampScroll(Math.round(focusPos), visible.length)
+    const slotIndex = visible[rank]
+    if (slotIndex === undefined) {
+      return
+    }
+
+    const position = positionAt(
+      rank,
+      scrollPos,
+      focusPos,
+      params,
+      jitter[slotIndex]!,
+      params.fanStrength * hover,
+    )
+
+    const x = window.innerWidth / 2 + position.x
+    const y = window.innerHeight / 2 + position.y
+    peek!.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) translate(-50%, -50%)`
+  }
+
+  // --- Loop ---------------------------------------------------------------
+
+  function tick(now: number): void {
+    const delta = Math.min(now - lastTime, 64)
+    lastTime = now
+
+    // Momentum only applies while the band is being traversed.
+    if (mode !== 'detail') {
+      const step = delta / 16.667
+      scrollTarget += velocity * step
+      velocity *= MOMENTUM_DAMPING ** step
+
+      if (Math.abs(velocity) < MOMENTUM_EPSILON) {
+        velocity = 0
+      }
+
+      // Allow a little slack past the ends, then pull back — running into a
+      // hard stop mid-flick feels like a bug.
+      const max = Math.max(0, visible.length - 1)
+      if (scrollTarget < -OVERSCROLL || scrollTarget > max + OVERSCROLL) {
+        scrollTarget = Math.max(-OVERSCROLL, Math.min(max + OVERSCROLL, scrollTarget))
+        velocity = 0
+      }
+      if (velocity === 0) {
+        scrollTarget = clampScroll(scrollTarget, visible.length)
+      }
+    }
+
+    scrollPos = damp(scrollPos, scrollTarget, SCROLL_SMOOTHING, delta)
+    focusPos = damp(focusPos, focusTarget, FOCUS_SMOOTHING, delta)
+    hover = damp(hover, hoverTarget, FOCUS_SMOOTHING, delta)
+    expand = damp(expand, expandTarget, PARAM_SMOOTHING, delta)
+    for (const entry of openFrames.values()) {
+      entry.amount = damp(entry.amount, entry.target, PARAM_SMOOTHING, delta)
+    }
+
+    const target = MODE_PARAMS[mode]
+    // Only the overview has to fit the viewport; browse and detail deliberately
+    // run the band off-screen either side of the photograph in hand.
+    const gapTarget = mode === 'ribbon' ? fittedRibbonGap() : target.gap
+    // Detail is the one mode holding something whose size the viewport decides,
+    // so it is the one whose split has to be measured against it.
+    const groupGapTarget = mode === 'detail' ? detailGroupGap() : target.groupGap
+
+    params.gap = damp(params.gap, gapTarget, PARAM_SMOOTHING, delta)
+    params.groupGap = damp(params.groupGap, groupGapTarget, PARAM_SMOOTHING, delta)
+    params.fanStrength = damp(params.fanStrength, target.fanStrength, PARAM_SMOOTHING, delta)
+    params.frameScale = damp(params.frameScale, target.frameScale, PARAM_SMOOTHING, delta)
+
+    render()
+
+    // Idle out once everything has settled, so a still page costs nothing.
+    const settled
+      = velocity === 0
+        && Math.abs(scrollPos - scrollTarget) < 0.001
+        && Math.abs(focusPos - focusTarget) < 0.001
+        && Math.abs(hover - hoverTarget) < 0.001
+        && Math.abs(expand - expandTarget) < 0.001
+        // An entry at target is fine — a photo can sit open indefinitely. Only
+        // one still travelling should keep the loop alive.
+        && [...openFrames.values()].every(e => Math.abs(e.amount - e.target) < 0.001)
+        && Math.abs(params.gap - gapTarget) < 0.01
+        && Math.abs(params.groupGap - groupGapTarget) < 0.01
+        && Math.abs(params.fanStrength - target.fanStrength) < 0.01
+        && Math.abs(params.frameScale - target.frameScale) < 0.0005
+
+    if (settled) {
+      running = false
+      return
+    }
+
+    requestAnimationFrame(tick)
+  }
+
+  function wake(): void {
+    if (running) {
+      return
+    }
+    running = true
+    lastTime = performance.now()
+    requestAnimationFrame(tick)
+  }
+
+  // --- Input --------------------------------------------------------------
+
+  function onWheel(event: WheelEvent): void {
+    // The panel is a sheet of text that may not fit; while it is up the wheel
+    // belongs to it, which means not preventing the default scroll either.
+    if (helpOpen) {
+      return
+    }
+
+    event.preventDefault()
+
+    if (mode === 'detail') {
+      // In detail the wheel steps between photographs rather than scrubbing.
+      step(event.deltaY > 0 ? 1 : -1)
+      return
+    }
+
+    if (mode === 'ribbon') {
+      // The overview is pinned to the middle of the band and the whole of it
+      // is on screen, so there is nowhere to scroll *to*. The wheel walks the
+      // fan along the band instead — that, the marker and the stamp are what
+      // say which photograph you have reached, and shoving a band that already
+      // fits only pushes one end of it off the corner.
+      focusTarget = clampScroll(
+        focusTarget + event.deltaY * FOCUS_SENSITIVITY,
+        visible.length,
+      )
+      hoverTarget = 1
+      wake()
+      return
+    }
+
+    velocity += event.deltaY * SCROLL_SENSITIVITY
+    wake()
+  }
+
+  function onPointerMove(event: PointerEvent): void {
+    if (mode !== 'ribbon') {
+      return
+    }
+
+    const dx = event.clientX - window.innerWidth / 2
+    const dy = event.clientY - window.innerHeight / 2
+
+    focusTarget = clampScroll(
+      indexAtPoint(dx, dy, scrollPos, params.gap),
+      visible.length,
+    )
+    hoverTarget = 1
+    wake()
+  }
+
+  function onPointerLeave(): void {
+    hoverTarget = 0
+    wake()
+  }
+
+  /**
+   * Start tracking a finger.
+   *
+   * `dragged` is cleared for the mouse too: a click arrives after the pointer
+   * sequence that produced it, so a flag left standing by a touch drag would
+   * otherwise swallow the next mouse click on a hybrid device.
+   */
+  function onPointerDown(event: PointerEvent): void {
+    dragged = false
+    touchInput = event.pointerType !== 'mouse'
+
+    if (event.pointerType === 'mouse' || dragId !== null) {
+      return
+    }
+
+    dragId = event.pointerId
+    dragStartX = event.clientX
+    dragStartY = event.clientY
+    dragLastU = 0
+    dragVelocity = 0
+    velocity = 0
+  }
+
+  /**
+   * Move the band with the finger.
+   *
+   * Displacement is projected onto the stacking axis, so the gesture obeys the
+   * band's own geometry rather than a separate horizontal-or-vertical rule:
+   * dragging down-left pushes the stack that way and brings the photographs
+   * above it into view, whichever direction the finger actually took. That
+   * makes a swipe left and a swipe down both mean "next", matching the wheel.
+   *
+   * Deliberately not bound to the stack: the finger regularly strays over the
+   * fixed chrome mid-drag, and losing the pointer stream there would strand
+   * the gesture half finished.
+   */
+  function onDrag(event: PointerEvent): void {
+    // The overview stays hover-only. The band already fits the viewport, so
+    // there is nothing to scroll to, and the finger's job there is to fan.
+    if (event.pointerId !== dragId || mode === 'ribbon') {
+      return
+    }
+
+    const dx = event.clientX - dragStartX
+    const dy = event.clientY - dragStartY
+    if (Math.hypot(dx, dy) > TAP_SLOP) {
+      dragged = true
+    }
+
+    const u = dx * AXIS.x + dy * AXIS.y
+
+    if (mode === 'detail') {
+      // Quantised rather than continuous: a photograph filling the frame has
+      // to arrive whole, not be dragged halfway in.
+      const steps = Math.trunc((u - dragLastU) / SWIPE_STEP)
+      if (steps !== 0) {
+        dragLastU += steps * SWIPE_STEP
+        // Demonstrated rather than read: the hint has served its purpose and
+        // should not greet this viewer again.
+        swipeLearned = true
+        offerSwipeHint(false)
+        focusRank((openRank ?? Math.round(scrollPos)) - steps, true)
+      }
+      return
+    }
+
+    const delta = -(u - dragLastU) / params.gap
+    dragLastU = u
+
+    // Drive the target directly and keep momentum out of it until release,
+    // otherwise the loop adds velocity on top of the finger's own movement.
+    scrollTarget = clampScroll(scrollTarget + delta, visible.length)
+    dragVelocity = delta
+    velocity = 0
+    wake()
+  }
+
+  function onPointerUp(event: PointerEvent): void {
+    if (event.pointerId !== dragId) {
+      return
+    }
+
+    dragId = null
+
+    // Let go mid-sweep and the band glides on, the same as a wheel flick.
+    if (dragged && mode !== 'detail') {
+      velocity = dragVelocity
+      wake()
+    }
+  }
+
+  function onClick(event: MouseEvent): void {
+    // A drag ends in a click on the element it finished over. Opening that
+    // photograph would undo the gesture the viewer just made.
+    if (dragged) {
+      dragged = false
+      return
+    }
+
+    const slot = (event.target as HTMLElement).closest<HTMLElement>('.slot')
+
+    if (mode === 'ribbon') {
+      // The packed band is too dense to hit a single slice, so open whatever
+      // the fan has brought to the front rather than the literal click target.
+      focusRank(Math.round(focusPos), false)
+      return
+    }
+
+    if (!slot) {
+      setMode('ribbon')
+      return
+    }
+
+    const rank = rankOf[Number(slot.dataset.index)]!
+    if (rank < 0) {
+      return
+    }
+
+    if (mode === 'browse') {
+      focusRank(rank, rank === openRank)
+      return
+    }
+
+    // Detail: clicking the open photo closes it, a neighbour swaps to it.
+    focusRank(rank, rank !== openRank)
+  }
+
+  function step(direction: number): void {
+    const next = clampScroll((openRank ?? Math.round(scrollPos)) + direction, visible.length)
+    focusRank(next, mode === 'detail')
+  }
+
+  function onKeyDown(event: KeyboardEvent): void {
+    // While the panel is up it is the only thing being driven: stepping the
+    // band behind it would leave the viewer somewhere else when it closes.
+    if (helpOpen) {
+      if (event.key === 'Escape' || event.key === '?') {
+        event.preventDefault()
+        setHelp(false)
+      }
+      return
+    }
+
+    switch (event.key) {
+      case '?':
+        event.preventDefault()
+        setHelp(true)
+        break
+
+      case 's':
+      case 'S':
+        event.preventDefault()
+        toggleSave()
+        break
+
+      case 'Escape':
+        event.preventDefault()
+        setMode(mode === 'detail' ? 'browse' : 'ribbon')
+        break
+
+      case 'ArrowRight':
+      case 'ArrowUp':
+        event.preventDefault()
+        step(1)
+        break
+
+      case 'ArrowLeft':
+      case 'ArrowDown':
+        event.preventDefault()
+        step(-1)
+        break
+
+      case ' ':
+        event.preventDefault()
+        if (mode === 'ribbon') {
+          focusRank(Math.round(scrollPos), false)
+        }
+        else {
+          focusRank(openRank ?? Math.round(scrollPos), mode !== 'detail')
+        }
+        break
+    }
+  }
+
+  // openScale() is recomputed every frame, so a resize only needs to make
+  // sure the loop is awake to pick up the new viewport — except across the
+  // phone threshold, where the time axis is rebuilt because it carries fewer
+  // marks at that width.
+  function onResize(): void {
+    const narrow = window.innerWidth < NARROW_VIEWPORT
+    if (narrow !== narrowLayout) {
+      narrowLayout = narrow
+      buildTimeAxis()
+    }
+
+    wake()
+  }
+
+  // --- Wiring -------------------------------------------------------------
+
+  // requestAnimationFrame is suspended while the tab is hidden, so a frame
+  // queued just before the switch never arrives — leaving `running` stuck on
+  // and every later wake() a no-op. Without this the gallery is frozen for
+  // good once the viewer comes back from another tab.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      running = false
+      wake()
+    }
+  })
+
+  window.addEventListener('wheel', onWheel, { passive: false })
+  window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('resize', onResize)
+  stack.addEventListener('pointermove', onPointerMove)
+  stack.addEventListener('pointerleave', onPointerLeave)
+  stack.addEventListener('click', onClick)
+  stack.addEventListener('pointerdown', onPointerDown)
+  window.addEventListener('pointermove', onDrag)
+  window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointercancel', onPointerUp)
+
+  tagButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const tag = button.dataset.tag
+      if (tag && tag !== activeTag) {
+        applyFilter(tag)
+      }
+    })
+  })
+
+  /*
+   * One listener for every button in the chrome. They sit in four different
+   * components but act on one piece of state — the photograph being read — and
+   * that state lives here, so the handling does too.
+   */
+  document.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement
+
+    // A click on the panel's own backdrop, rather than on the sheet inside it.
+    if (target === shortcuts) {
+      setHelp(false)
+      return
+    }
+
+    const trigger = target.closest<HTMLElement>('[data-action]')
+    if (!trigger) {
+      return
+    }
+
+    switch (trigger.dataset.action) {
+      case 'save':
+      case 'save-photo':
+        toggleSave()
+        break
+      case 'share':
+        void sharePhoto()
+        break
+      case 'help':
+        setHelp(!helpOpen)
+        break
+      case 'close-shortcuts':
+        setHelp(false)
+        break
+      case 'read-more':
+        setExpanded(!expanded)
+        break
+    }
+  })
+
+  // A saved picture is per-browser, not per-tab: the same archive open in
+  // another window edits the same collection.
+  onCollectionChange(syncSaveState)
+
+  // Start centred so the band runs off both corners of the viewport.
+  scrollTarget = Math.floor(count / 2)
+  scrollPos = scrollTarget
+  focusTarget = scrollTarget
+  focusPos = scrollTarget
+  applyFilter('all')
+  syncSaveState()
+  openInitialPhoto()
+}
+</script>

@@ -1,0 +1,68 @@
+---
+// Graduated marks along the band, as in the reference: the ribbon is a
+// timeline, and without ticks on it the only reading of where you are is the
+// stamp's single date.
+//
+// Empty here on purpose. Which marks exist depends on the filtered list and on
+// the granularity `timeMarkers()` picks for it, and where they sit depends on
+// the same geometry that places the photographs — both of which live in the
+// ribbon controller. It fills this in, and rebuilds it only when the list
+// changes.
+---
+
+<div class="time-axis" id="time-axis" aria-hidden="true"></div>
+
+<style>
+  .time-axis {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+
+    /* Never in the way of the band it annotates. */
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+
+  /*
+   * Only in the overview. That is the one mode where the whole band is on
+   * screen at a fitted spacing, so a run of dates along it reads as a scale;
+   * in browse and detail the band runs off both corners and the marks would be
+   * a caption on whatever happened to be passing.
+   */
+  :global([data-mode='ribbon']) .time-axis {
+    opacity: 1;
+  }
+
+  /* Positioned by the loop. Each mark is rotated into the band's own angle, so
+     the label runs along the ribbon and the tick crosses it. */
+  .time-axis :global(.mark) {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+
+    /* The loop writes a transform that starts at the viewport centre — the
+       same origin the band is measured from — so the corner, not the centre of
+       the label, is what the geometry places. */
+    transform-origin: 0 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    white-space: nowrap;
+  }
+
+  .time-axis :global(.tick) {
+    width: 1px;
+    height: 0.55rem;
+    background: var(--c-ink-faint);
+  }
+
+  .time-axis :global(.label) {
+    color: var(--c-ink-mute);
+    font-size: var(--fs-micro);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--tracking-wider);
+    text-transform: uppercase;
+  }
+</style>

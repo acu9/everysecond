@@ -1,0 +1,30 @@
+---
+// Always-on readout of where the viewer is in the collection: the capture date
+// and time of whichever photograph currently holds the centre of the band, or
+// the one under the cursor while the band is fanned open. Populated by the
+// ribbon controller.
+---
+
+<div class="stamp" id="stamp" aria-live="polite">
+  <p class="date" data-field="date"></p>
+  <p class="time" data-field="time"></p>
+</div>
+
+<style>
+  .stamp {
+    position: fixed;
+    top: var(--pad-edge);
+    left: var(--pad-edge);
+    z-index: var(--z-chrome);
+    color: var(--c-ink);
+  }
+
+  p {
+    font-size: var(--fs-small);
+    font-weight: 500;
+    line-height: 1.45;
+
+    /* Digits must not jostle as the seconds change. */
+    font-variant-numeric: tabular-nums;
+  }
+</style>

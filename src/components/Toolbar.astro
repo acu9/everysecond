@@ -1,0 +1,145 @@
+---
+// Fixed utilities, mirroring the reference's thin-stroke icon set.
+//
+// All three act on "the photograph you are reading" — whichever one the stamp
+// is showing — rather than only on an opened one, so saving and sharing work
+// from the overview as well. The ribbon controller owns that reading, so it
+// owns these buttons too; this file is their markup and their state classes.
+---
+
+<div class="toolbar">
+  {/* Announcements for actions whose result is otherwise invisible: a copied
+      link leaves nothing on screen, and a save only tints an icon. */}
+  <p class="note" id="toolbar-note" role="status" aria-live="polite"></p>
+
+  <a class="link" href="/collection">
+    collection<sup data-field="saved-count">0</sup>
+  </a>
+
+  <button
+    type="button"
+    class="icon"
+    data-action="save"
+    aria-pressed="false"
+    aria-label="Save this picture to your collection"
+  >
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M5 3h10v14l-5-4-5 4V3Z" />
+    </svg>
+  </button>
+  <button type="button" class="icon" data-action="share" aria-label="Copy a link to this picture">
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="15" cy="4.5" r="2.2" />
+      <circle cx="5" cy="10" r="2.2" />
+      <circle cx="15" cy="15.5" r="2.2" />
+      <path d="M13 5.6 7 8.9M7 11.1l6 3.3" />
+    </svg>
+  </button>
+  <button
+    type="button"
+    class="icon"
+    data-action="help"
+    aria-expanded="false"
+    aria-label="Keyboard shortcuts"
+  >
+    <span aria-hidden="true">?</span>
+  </button>
+</div>
+
+<style>
+  .toolbar {
+    position: fixed;
+    right: var(--pad-edge);
+    bottom: var(--pad-edge);
+    z-index: var(--z-chrome);
+    display: flex;
+    align-items: center;
+    gap: 1.1rem;
+  }
+
+  .icon {
+    display: grid;
+    place-items: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    color: var(--c-ink-mute);
+    font-size: var(--fs-small);
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+
+  .icon:hover {
+    color: var(--c-ink);
+  }
+
+  /* A saved picture is the one committed state in the toolbar, so it takes the
+     accent and the icon fills in — the same "this one is chosen" reading the
+     selected series has in the panel above. */
+  .icon[aria-pressed='true'] {
+    color: var(--c-accent);
+  }
+
+  .icon[aria-pressed='true'] svg {
+    fill: currentcolor;
+  }
+
+  svg {
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: currentcolor;
+    stroke-width: 1.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .link {
+    color: var(--c-ink-mute);
+    font-size: var(--fs-small);
+    letter-spacing: var(--tracking-wide);
+    text-decoration: none;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+
+  .link:hover {
+    color: var(--c-ink);
+  }
+
+  .link sup {
+    margin-left: 0.15em;
+    font-size: var(--fs-nano);
+  }
+
+  /*
+   * Out of the flow: the note appears and disappears on its own schedule, and
+   * in the row it would shove the icons sideways every time it did.
+   */
+  .note {
+    position: absolute;
+    right: 100%;
+    margin-right: 1.1rem;
+    color: var(--c-ink-mute);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--tracking-wide);
+    white-space: nowrap;
+    text-transform: uppercase;
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+
+  .note.is-visible {
+    opacity: 1;
+  }
+
+  /* Beside the toolbar there is no room left on a phone; above it there is. */
+  @media (width < 720px) {
+    .note {
+      right: 0;
+      bottom: 100%;
+      margin: 0 0 0.6rem;
+    }
+
+    .toolbar {
+      gap: 0.9rem;
+    }
+  }
+</style>

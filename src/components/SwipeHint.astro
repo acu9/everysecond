@@ -1,0 +1,83 @@
+---
+// Tells a finger what the wheel and the arrow keys already tell a desktop
+// viewer. Shown by the ribbon controller when a photograph is opened by touch,
+// and retired for good once the viewer has swiped once — a hint that keeps
+// reappearing after it has been understood stops being a hint.
+---
+
+<div class="swipe-hint" id="swipe-hint" aria-hidden="true">
+  <svg class="mark" viewBox="0 0 12 30">
+    <path d="M6 8v14" />
+    <path d="M3 11l3-3 3 3" />
+    <path d="M3 19l3 3 3-3" />
+  </svg>
+  <span>swipe up or down</span>
+</div>
+
+<style>
+  /*
+   * Anchored above the opened photograph, the same way the caption is anchored
+   * below it: the controller publishes the photo's rendered size, and since the
+   * photo is centred, half of it reaches the edge. The space above the picture
+   * is the only part of the frame that stays empty in detail — the caption has
+   * the space below, and a corner would put this over the neighbouring stacks.
+   */
+  .swipe-hint {
+    position: fixed;
+    bottom: calc(50% + var(--open-h, 0px) / 2 + 1.15rem);
+    left: 50%;
+    z-index: var(--z-chrome);
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    color: var(--c-ink-mute);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--tracking-wider);
+    text-transform: uppercase;
+    white-space: nowrap;
+    opacity: 0;
+
+    /* Never eat the gesture it is describing. */
+    pointer-events: none;
+    transform: translateX(-50%);
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+
+  /*
+   * Let the photograph arrive, then its caption, then this — the same staged
+   * order the reference reads in, rather than everything landing at once.
+   */
+  .swipe-hint.is-visible {
+    opacity: 1;
+    transition-delay: 0.5s;
+  }
+
+  .mark {
+    width: 0.7rem;
+    height: 1.75rem;
+    fill: none;
+    stroke: currentcolor;
+    stroke-width: 1.1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    animation: nudge 2.6s var(--ease-in-out) infinite;
+  }
+
+  /* Small enough to read as a suggestion rather than a demand for attention. */
+  @keyframes nudge {
+    0%,
+    100% {
+      transform: translateY(-2px);
+    }
+
+    50% {
+      transform: translateY(2px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mark {
+      animation: none;
+    }
+  }
+</style>

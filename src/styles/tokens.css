@@ -1,0 +1,53 @@
+/*
+ * Design tokens lifted from the reference art direction.
+ *
+ * The interface is deliberately close to achromatic: photographs are the only
+ * source of colour, and the single accent is reserved for one element per view.
+ */
+
+:root {
+  /* Surface */
+  --c-bg: #f4f4f4;
+  --c-bg-deep: #ebebeb;
+  --c-ink: #1e1e1e;
+  --c-ink-mute: #8c8c8c;
+  --c-ink-faint: #c2c2c2;
+  --c-accent: #ff5c1a;
+  --c-line: rgb(30 30 30 / 12%);
+
+  /* Type */
+  --font-sans: 'Space Grotesk Variable', 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --fs-nano: 0.625rem;   /* 10px — superscript counts */
+  --fs-micro: 0.6875rem; /* 11px — metadata, axis labels */
+  --fs-small: 0.8125rem; /* 13px — tags, controls */
+  --fs-base: 0.9375rem;  /* 15px — brandmark */
+  --tracking-wide: 0.08em;
+  --tracking-wider: 0.14em;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
+  --dur-fast: 0.25s;
+  --dur-base: 0.5s;
+  --dur-slow: 0.8s;
+
+  /* Layout */
+  --pad-edge: 2.5rem;
+  --z-chrome: 100;
+  --z-overlay: 200;
+}
+
+/*
+ * Phone. The gestures were always the same ones; what changes here is the
+ * chrome, which on a desktop is laid out around a band that has room on every
+ * side, and on a phone is four labels competing for one corner.
+ *
+ * 720px is the same threshold as NARROW_VIEWPORT in Ribbon.astro, where the
+ * opened photograph's width budget changes. A media query cannot read a custom
+ * property, so the number is stated in both places and has to stay in step.
+ */
+@media (width < 720px) {
+  :root {
+    --pad-edge: 1.1rem;
+  }
+}

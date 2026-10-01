@@ -1,0 +1,36 @@
+---
+// The in-interface wordmark is set plainly. The raised ring on the "o" belongs
+// to the standalone logo lockup, not to the running chrome.
+---
+
+{/* A heading, not a link: on the only page there is, a self-link goes nowhere
+    and just collects a focus ring. */}
+<h1 class="brandmark">every : second</h1>
+
+<style>
+  .brandmark {
+    position: fixed;
+    top: var(--pad-edge);
+    left: 50%;
+    z-index: var(--z-chrome);
+    color: var(--c-ink);
+    font-size: var(--fs-small);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+    white-space: nowrap;
+    transform: translateX(-50%);
+  }
+
+  /*
+   * Centred, the wordmark lands on the stamp: both sit on the same baseline,
+   * and a phone has no room between them. It moves to the opposite corner
+   * rather than down, so the top line of the interface still reads as one row.
+   */
+  @media (width < 720px) {
+    .brandmark {
+      left: auto;
+      right: var(--pad-edge);
+      transform: none;
+    }
+  }
+</style>
